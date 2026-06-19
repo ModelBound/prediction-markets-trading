@@ -154,33 +154,38 @@ class KalshiClient:
         order_type: str = "limit",
     ) -> dict:
         """
-        Place an order on Kalshi.
+        Place an order on Kalshi using the V2 endpoint.
 
         Args:
             ticker: Market ticker
             side: 'yes' or 'no'
             count: Number of contracts
             price: Price in cents (1-99)
-            action: 'buy' (only action supported)
+            action: 'buy' (only action supported for now)
             order_type: 'limit'
         """
+        # V2 uses 'bid' (buy YES) / 'ask' (sell YES).
+        # Buying NO at X¢ is equivalent to selling YES at (100-X)¢.
+        if side == "yes":
+            v2_side = "bid"
+            v2_price = f"{price / 100:.2f}"
+        else:
+            # Buying NO at `price` cents = selling YES at (100 - price) cents
+            v2_side = "ask"
+            v2_price = f"{(100 - price) / 100:.2f}"
+
         data = {
             "ticker": ticker,
-            "action": action,
-            "side": side,
-            "count": count,
-            "type": order_type,
+            "side": v2_side,
+            "count": f"{count:.2f}",
+            "price": v2_price,
+            "time_in_force": "good_till_canceled",
+            "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": str(uuid.uuid4()),
         }
 
-        # Set the appropriate price field
-        if side == "yes":
-            data["yes_price"] = price
-        else:
-            data["no_price"] = price
-
-        logger.info(f"Placing order: {side.upper()} {count}x {ticker} @ {price}¢")
-        return self._request("POST", "/portfolio/orders", data=data)
+        logger.info(f"Placing order: {side.upper()} {count}x {ticker} @ {price}¢ (V2: {v2_side} @ ${v2_price})")
+        return self._request("POST", "/portfolio/events/orders", data=data)
 
     def cancel_order(self, order_id: str) -> dict:
         """Cancel an order."""

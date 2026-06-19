@@ -833,7 +833,7 @@ class TradingCycle:
         return tickers, event_prefixes
 
     def _filled_count(self, order: dict) -> int:
-        """Return filled contracts from a Kalshi order payload."""
+        """Return filled contracts from a Kalshi order payload (V1 or V2)."""
         raw = order.get("fill_count_fp", order.get("fill_count", 0))
         try:
             return int(float(raw or 0))
@@ -853,13 +853,28 @@ class TradingCycle:
 
     def _actual_order_side(self, order: dict, requested_side: str) -> str:
         """Use Kalshi's executed side as the source of truth."""
-        return str(order.get("side") or order.get("outcome_side") or requested_side).lower()
+        raw_side = str(order.get("side") or order.get("outcome_side") or requested_side).lower()
+        # V2 returns 'bid'/'ask' — map back to yes/no
+        if raw_side == "bid":
+            return "yes"
+        elif raw_side == "ask":
+            return "no"
+        return raw_side
 
     def _actual_fill_price_cents(self, order: dict, filled_count: int, requested_price: int) -> int:
         """Derive average filled price from Kalshi fill cost when available."""
         if filled_count <= 0:
             return requested_price
 
+        # V2 provides average_fill_price as a dollar string (e.g. "0.56")
+        avg_price_str = order.get("average_fill_price")
+        if avg_price_str:
+            try:
+                return int(round(float(avg_price_str) * 100))
+            except (TypeError, ValueError):
+                pass
+
+        # Legacy V1 fallback
         total_cost = 0.0
         for key in ("taker_fill_cost_dollars", "maker_fill_cost_dollars"):
             try:
@@ -1086,22 +1101,26 @@ class TradingCycle:
                     "reason": response.get("message", "API error"),
                 })
             else:
-                order = response.get("order", {})
-                if not self._is_filled_order(order):
+                # V2 response is flat: {order_id, fill_count, remaining_count, ts_ms, ...}
+                # Fall back to legacy nested format if present.
+                order = response.get("order", response)
+
+                filled_count = self._filled_count(order)
+                if filled_count <= 0:
+                    # Order resting or not filled — cancel to avoid surprise fills later
                     self._cancel_unfilled_order(order)
                     logger.warning(
                         f"Order not filled; not recording as trade: "
-                        f"status={order.get('status')} filled={self._filled_count(order)}"
+                        f"status={order.get('status', 'resting')} filled={filled_count}"
                     )
                     results.append({
                         "ticker": ticker,
                         "success": False,
-                        "reason": f"Order not filled: {order.get('status', 'unknown')}",
+                        "reason": f"Order not filled: {order.get('status', 'resting')}",
                         "order_id": order.get("order_id"),
                     })
                     continue
 
-                filled_count = self._filled_count(order)
                 actual_side = self._actual_order_side(order, side)
                 actual_price = self._actual_fill_price_cents(order, filled_count, price)
                 logger.info(f"Trade executed: {order.get('order_id', 'unknown')}")
@@ -1112,7 +1131,7 @@ class TradingCycle:
                     "count": filled_count,
                     "price": actual_price,
                     "order_id": order.get("order_id"),
-                    "status": order.get("status"),
+                    "status": order.get("status", "executed"),
                 })
                 # Track deployment against bankroll
                 trade_cost = filled_count * actual_price
@@ -1134,7 +1153,7 @@ class TradingCycle:
                     "ticker": ticker,
                     "success": True,
                     "order_id": order.get("order_id"),
-                    "status": order.get("status"),
+                    "status": order.get("status", "executed"),
                 })
 
         return results

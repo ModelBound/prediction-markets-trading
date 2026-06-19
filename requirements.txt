@@ -1,0 +1,6 @@
+requests==2.31.0
+cryptography==42.0.5
+openai>=1.40.0
+python-dotenv==1.0.1
+aiohttp==3.9.5
+apscheduler==3.10.4

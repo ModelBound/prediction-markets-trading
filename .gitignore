@@ -1,0 +1,32 @@
+.env
+.env.*
+!.env.example
+
+# Private keys and credentials
+*.pem
+*.key
+*_key.*
+credentials*.json
+secrets*.json
+
+# Runtime state and logs
+data/*
+!data/.gitkeep
+*.log
+
+# Local development
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Local IDE/agent metadata
+.cursor/
+.kiro/
+.modelbound/
+
+# Build and deployment artifacts
+.dockerignore.local
+dist/
+build/

@@ -1,0 +1,17 @@
+.git
+.modelbound
+.cursor
+.kiro
+__pycache__
+*.pyc
+data/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.venv/
+venv/
+README.md
+test.html

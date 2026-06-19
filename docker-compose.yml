@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  trading-agent:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,5 +1,12 @@
 # Prediction Markets Trading
 
+> **Disclaimer:** This software is provided for educational and experimental
+> purposes only. It is not financial advice. The authors and contributors are
+> not responsible for any financial losses, damages, or other consequences
+> resulting from the use of this software. Prediction markets carry real
+> financial risk. You are solely responsible for your own trading decisions and
+> any funds you choose to risk. Use at your own discretion.
+
 An open source AI-powered prediction market trading platform. The default
 integration trades on Kalshi with OpenAI for decisions, review, research, and
 post-settlement learning. The code is structured so contributors can add other
@@ -29,6 +36,7 @@ The agent runs a repeated trading cycle:
 - Infra target: DigitalOcean Droplet with Docker Compose
 - Skill management: optional ModelBound-synced local cache
 - Trading mode: `demo` unless `TRADING_MODE=production`
+- Kalshi API: V2 order endpoint (`/portfolio/events/orders`)
 
 Polymarket support is intentionally a scaffold. The extension points are present,
 but a contributor must implement the Polymarket CLOB client, market
@@ -116,7 +124,26 @@ DigitalOcean:
 1. Create a DigitalOcean API token if you want to use `deploy.py`.
 2. Add your SSH key to DigitalOcean and set `DIGITALOCEAN_SSH_KEY_ID`.
 3. For the simple Droplet deploy script, make sure your SSH key is available at
-   `~/.ssh/id_rsa_digitalocean` or adjust `deploy_droplet.sh`.
+   `~/.ssh/id_rsa_digitalocean` or adjust the `SSH_KEY` variable at the top of
+   `deploy_droplet.sh` to point to your actual key path.
+
+## Quick Start
+
+After completing setup and filling in `.env`:
+
+1. Start the agent (locally or via Docker — see sections below).
+2. Start the dashboard: `python dashboard.py`
+3. Open `http://localhost:8888` in your browser.
+4. **Activate a trading bankroll** using the control panel at the top of the
+   dashboard. The agent starts in **monitor-only mode** and will not place
+   trades until you explicitly set a budget. You can enter a dollar amount or
+   click "Use Cash Balance" to use your current Kalshi cash.
+5. Confirm the next cycle picks up the bankroll by checking the logs for
+   `Bankroll: $X.XX initial | Available: ...` instead of
+   `Trading INACTIVE (no bankroll set)`.
+
+The agent will now scan markets, research, decide, review, and execute trades
+every 20 minutes.
 
 ## Running Locally
 
@@ -144,6 +171,10 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
+The container exposes port 9090 for the data API (used by the dashboard to sync
+state). The dashboard itself is **not containerized** — run it locally with
+`python dashboard.py` and it will connect to the agent's data API.
+
 ## DigitalOcean Deployment
 
 DigitalOcean is the default infra path, but the app does not depend on it. Any
@@ -158,6 +189,11 @@ Simple Droplet deployment:
 The script uploads source files and your local `.env` to the remote host, then
 runs Docker Compose. Keep the remote `.env` protected and rotate secrets if you
 ever suspect exposure.
+
+**Important:** Do not run the agent locally AND on a remote droplet at the same
+time against the same Kalshi account. Both instances share the same bankroll
+state and can create duplicate orders or conflicting position tracking. Run the
+agent in one place only; use the dashboard locally to monitor.
 
 Optional DigitalOcean API helper:
 
@@ -215,6 +251,35 @@ and model outputs can be wrong or delayed.
 - Use minimal bankrolls when testing production mode.
 - Rotate any token that was ever copied into chat, logs, screenshots, or git.
 - Review generated trades and settlement reporting before trusting metrics.
+
+## Troubleshooting
+
+**Agent says "Trading INACTIVE (no bankroll set)":**
+You need to activate a trading budget through the dashboard control panel. The
+agent will not trade until a bankroll is explicitly set. See the Quick Start
+section.
+
+**Orders fail with 410 error:**
+You are running an outdated version of `kalshi_client.py`. Pull the latest code
+which uses the current Kalshi V2 order endpoint.
+
+**Dashboard won't start (port 8888 already in use):**
+Another process is using port 8888. Kill it with `lsof -ti :8888 | xargs kill`
+or change the `PORT` variable in `dashboard.py`.
+
+**Dashboard shows "connected: false" or stale data:**
+The dashboard tries to reach the agent's data API on port 9090. If the agent is
+on a remote droplet, make sure port 9090 is accessible (check firewall/security
+group rules). The dashboard falls back to cached local data when the API is
+unreachable.
+
+**Both local and remote agents running simultaneously:**
+This causes conflicting trades and budget state corruption. Only run the trading
+agent in one location. Use the dashboard locally for monitoring.
+
+**SSH key errors with deploy_droplet.sh:**
+The script expects a key at `~/.ssh/id_rsa_digitalocean`. Edit the `SSH_KEY`
+variable at the top of the script to match your actual key path.
 
 ## Contributing
 

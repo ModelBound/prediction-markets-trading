@@ -38,6 +38,9 @@ CYCLE_INTERVAL_SECONDS = 1200  # 20 minutes
 STARTING_BALANCE_CENTS = 1000_00  # $1000 starting (conservative)
 FAST_CYCLE_INTERVAL_SECONDS = 300  # 5 minutes when markets are near close
 
+# Market horizon: only trade markets closing within this many days
+MAX_DAYS_TO_CLOSE = 3
+
 # Risk Parameters
 MAX_CONCENTRATION_PCT = 0.15  # 15% max in single market
 MAX_CYCLE_SPEND_PCT = 0.25  # 25% max spend per cycle

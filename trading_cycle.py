@@ -398,6 +398,27 @@ class TradingCycle:
                 m["rules"] = ""
                 m["rules_parsed"] = False
 
+        # Compute days_to_close for all enriched markets and apply hard horizon filter
+        from datetime import timezone
+        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        for m in enriched:
+            close_str = m.get("close_time", "")
+            if not close_str:
+                m["days_to_close"] = 999
+                m["hours_to_close"] = 999 * 24
+                continue
+            try:
+                close_time = datetime.fromisoformat(close_str.replace("Z", "+00:00"))
+                days_until_close = (close_time - now).total_seconds() / 86400
+                m["days_to_close"] = days_until_close if days_until_close > 0 else 999
+                m["hours_to_close"] = m["days_to_close"] * 24
+            except (ValueError, TypeError):
+                m["days_to_close"] = 999
+                m["hours_to_close"] = 999 * 24
+
+        # Hard filter: only trade markets closing within MAX_DAYS_TO_CLOSE
+        enriched = [m for m in enriched if m["days_to_close"] <= config.MAX_DAYS_TO_CLOSE]
+
         # Filter: markets with meaningful volume (>$500/day)
         high_volume = [m for m in enriched if m.get("volume", 0) >= 500]
 
@@ -415,24 +436,8 @@ class TradingCycle:
             and m.get("yes_bid", 0) > 0
         ]
 
-        # Also include markets closing within 24 hours with any volume
-        from datetime import timezone
-        now = datetime.utcnow().replace(tzinfo=timezone.utc)
-        closing_soon = []
-        for m in enriched:
-            close_str = m.get("close_time", "")
-            if not close_str or m.get("volume", 0) < 100:
-                continue
-            try:
-                close_time = datetime.fromisoformat(close_str.replace("Z", "+00:00"))
-                days_until_close = (close_time - now).total_seconds() / 86400
-                if days_until_close > 0:
-                    m["days_to_close"] = days_until_close
-                    m["hours_to_close"] = days_until_close * 24
-                if 0 < days_until_close <= 1:  # Closing within 24 hours
-                    closing_soon.append(m)
-            except (ValueError, TypeError):
-                continue
+        # Identify markets closing within 24 hours (priority pool)
+        closing_soon = [m for m in enriched if m["days_to_close"] <= 1 and m.get("volume", 0) >= 100]
 
         # Combine with DIVERSITY: cap both series and broad groups so one sport
         # or championship theme cannot crowd out the full opportunity set.

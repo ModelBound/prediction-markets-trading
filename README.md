@@ -49,6 +49,7 @@ using `PREDICTION_MARKET_PROVIDER=polymarket`.
 - `portfolio.py` - local portfolio/risk state
 - `settlement_detector.py` - scorecard reconciliation from settlements
 - `free_research.py` - no-cost weather research helpers
+- `web_research.py` - free web search (Exa/mcporter, DuckDuckGo, Jina Reader)
 - `ai_provider.py` - AI provider extension protocol
 - `strategy.py` - strategy/research/review extension protocols
 - `dashboard.py` - local dashboard
@@ -87,6 +88,32 @@ Optional:
 - `MODELBOUND_API_TOKEN` if you use ModelBound for skill/prompt management
 - `DIGITALOCEAN_TOKEN` and `DIGITALOCEAN_SSH_KEY_ID` for DigitalOcean helpers
 - `POLYMARKET_*` values for contributors implementing Polymarket support
+- `RESEARCH_PROVIDER=free` (default) or `openai` for paid web search
+- `DROPLET_IP` when running the dashboard locally against a remote agent
+
+## Web Research (Free by Default)
+
+Market research uses [Agent-Reach](https://github.com/Panniantong/Agent-Reach)-compatible
+backends instead of OpenAI `web_search_preview` (~$0.03/call):
+
+| Backend | Role | Requirements |
+|---------|------|--------------|
+| **Exa** via [mcporter](https://github.com/steipete/mcporter) | Semantic web search (preferred) | Node.js + `mcporter` in PATH |
+| **DuckDuckGo HTML** | Search fallback | None (works everywhere) |
+| **Jina Reader** | Read result pages as markdown | None |
+
+Set `RESEARCH_PROVIDER=free` (default) in `.env`. The Docker image installs
+`mcporter` automatically so Exa is available on deployment. Local development
+without Node falls back to DuckDuckGo.
+
+Optional environment variables:
+
+- `EXA_MCP_URL` — Exa MCP endpoint (default: `https://mcp.exa.ai/mcp?tools=web_search_exa`)
+- `EXA_SEARCH_ENABLED=false` — disable Exa and use DuckDuckGo only
+- `RESEARCH_PROVIDER=openai` — revert to paid OpenAI web search
+
+Verify search backends at agent startup (log line: `Research provider: free`).
+Run unit tests: `python -m unittest tests/test_web_research.py`
 
 ## Getting API Keys
 
@@ -261,10 +288,11 @@ Another process is using port 8888. Kill it with `lsof -ti :8888 | xargs kill`
 or change the `PORT` variable in `dashboard.py`.
 
 **Dashboard shows "connected: false" or stale data:**
-The dashboard tries to reach the agent's data API on port 9090. If the agent is
-on a remote droplet, make sure port 9090 is accessible (check firewall/security
-group rules). The dashboard falls back to cached local data when the API is
-unreachable.
+The dashboard tries to reach the agent's data API on port 9090. Set
+`DROPLET_IP` (or `DROPLET_API_URL`) in your local `.env` when monitoring a
+remote agent. If the agent is on a remote droplet, make sure port 9090 is
+accessible (check firewall/security group rules). The dashboard falls back to
+cached local data when the API is unreachable.
 
 **Both local and remote agents running simultaneously:**
 This causes conflicting trades and budget state corruption. Only run the trading

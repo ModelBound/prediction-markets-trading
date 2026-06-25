@@ -54,7 +54,7 @@ MAX_TRADE_SPEND_PCT = 0.12  # Target at most 12% of available cash for normal tr
 HIGH_EDGE_TRADE_SPEND_PCT = 0.16  # Allow larger sizing for very strong edges
 MIN_TRADE_PRICE_CENTS = 5  # Avoid 1-4¢ longshots unless explicitly whitelisted in code
 AUTO_EXECUTE_REVIEWER_REDIRECTS = False  # Redirects are suggestions only; never auto-trade them
-TARGET_DAILY_EXECUTED_TRADES = 8  # Last 7d average was 6/day; target +25%.
+TARGET_DAILY_EXECUTED_TRADES = 4  # Quality over volume; was 8 and encouraged forced trades.
 
 # Fees
 TRADING_FEE_PCT = 0.048  # ~4.8%
@@ -68,6 +68,17 @@ MAX_NOTE_LENGTH = 1200
 REVIEWER_ENABLED = True
 REVIEWER_MODEL = "gpt-4o-mini"
 
+# Research — "free" uses Agent-Reach backends (Jina Reader + DuckDuckGo/Exa); "openai" uses web_search_preview
+RESEARCH_PROVIDER = os.getenv("RESEARCH_PROVIDER", "free")
+
+# Exa semantic search via mcporter (https://github.com/steipete/mcporter + https://mcp.exa.ai/mcp)
+# No API key required for the hosted Exa MCP endpoint. Requires Node.js + mcporter in PATH.
+EXA_MCP_URL = os.getenv(
+    "EXA_MCP_URL",
+    "https://mcp.exa.ai/mcp?tools=web_search_exa",
+)
+EXA_SEARCH_ENABLED = os.getenv("EXA_SEARCH_ENABLED", "true").lower() in ("1", "true", "yes")
+
 # Research Thoroughness
 MIN_RESEARCH_QUERIES = 1
 MAX_RESEARCH_QUERIES = 1
@@ -77,6 +88,18 @@ RESEARCH_CACHE_TTL_HOURS = 4
 MAX_RESEARCH_MARKETS = 1
 MIN_RESEARCH_VOLUME = 250
 REJECTION_COOLDOWN_CYCLES = 12  # Suppress repeatedly bad/rejected tickers for ~4 hours
+
+# Series the agent must never trade (15-min crypto markets behave like random walks)
+BLOCKED_TRADE_SERIES = {
+    "KXSOL15M",
+    "KXDOGE15M",
+    "KXBTC15M",
+    "KXETH15M",
+}
+
+# Minimum AI probability for low-price YES bets (avoids 6-17¢ longshots with 20-30% claimed edge)
+MIN_AI_PROB_FOR_LOW_PRICE_YES = 40  # when price <= LOW_PRICE_YES_THRESHOLD_CENTS
+LOW_PRICE_YES_THRESHOLD_CENTS = 20
 
 # OpenAI cost controls. These are conservative estimates used for a daily guardrail.
 # Target around $1/day in normal operation, with an absolute safety ceiling in code.

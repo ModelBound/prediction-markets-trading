@@ -426,9 +426,7 @@ class TradingCycle:
         # (these are matches/games that just opened and haven't accumulated volume yet)
         live_event_series = {"KXNHLGAME", "KXNBAGAME", "KXMLBGAME", "KXATPSETWINNER",
                            "KXFOPENMENSINGLE", "KXVALORANTGAME", "KXF1RACEPODIUM",
-                           "KXINDYCARRACE", "KXTABLETENNIS", "KXITFMATCH", "KXSOL15M",
-                           "KXHIGHTDC", "KXHIGHTNYC", "KXHIGHTCHI", "KXHIGHPHIL",
-                           "KXLOWTSEA", "KXTEMPNYCH"}
+                           "KXINDYCARRACE", "KXTABLETENNIS", "KXITFMATCH"}
         live_events = [
             m for m in enriched
             if m.get("volume", 0) >= 50
@@ -489,7 +487,10 @@ class TradingCycle:
 
         # Select with diversity cap
         championship_series = {"KXNBA", "KXNHL", "KXMLB", "CONTROLH", "CONTROLS"}
-        weather_series = {"KXHIGHTDC", "KXHIGHTNYC", "KXHIGHTCHI", "KXHIGHPHIL", "KXLOWTSEA", "KXTEMPNYCH"}
+
+        def _is_weather_series(series: str) -> bool:
+            prefixes = ("KXHIGH", "KXHIGHT", "KXLOWT", "KXLOWTM", "KXTEMP")
+            return any(series.startswith(p) for p in prefixes)
 
         # Build set of tickers/events we already hold — exclude from feed
         held_tickers = set(pos.get("ticker", "") for pos in self.portfolio.state.get("positions", []))
@@ -505,7 +506,11 @@ class TradingCycle:
             series = _get_series(ticker)
 
             # EXCLUDE weather entirely - the LLM over-indexes on it
-            if series in weather_series:
+            if _is_weather_series(series):
+                continue
+
+            # EXCLUDE blocked series (15-min crypto, etc.)
+            if series in config.BLOCKED_TRADE_SERIES:
                 continue
 
             # EXCLUDE markets we already hold positions in
@@ -939,6 +944,13 @@ class TradingCycle:
 
             logger.info(f"Attempting trade: {side.upper()} {count}x {ticker} @ {price}¢")
 
+            series = ticker.split("-")[0] if ticker else ""
+            if series in config.BLOCKED_TRADE_SERIES:
+                logger.info(f"Pre-flight reject: {ticker} series {series} is blocked")
+                self._log_blocked(trade, f"Blocked series: {series}", markets)
+                results.append({"ticker": ticker, "success": False, "reason": f"Blocked series: {series}"})
+                continue
+
             # (Rejection cache removed - every proposal goes fresh to reviewer)
 
             # Skip tickers we already have a position in (don't pile into same market)
@@ -1016,6 +1028,29 @@ class TradingCycle:
                 self._mark_rejected(ticker)
                 self._log_blocked(trade, f"Price too low: {price}¢", markets)
                 results.append({"ticker": ticker, "success": False, "reason": f"Price too low: {price}¢"})
+                continue
+
+            if (
+                side == "yes"
+                and price <= config.LOW_PRICE_YES_THRESHOLD_CENTS
+                and ai_prob < config.MIN_AI_PROB_FOR_LOW_PRICE_YES
+                and not trade.get("allow_longshot", False)
+            ):
+                logger.info(
+                    f"Pre-flight reject: {ticker} low-price YES needs AI prob "
+                    f">={config.MIN_AI_PROB_FOR_LOW_PRICE_YES}%, got {ai_prob}%"
+                )
+                self._mark_rejected(ticker)
+                self._log_blocked(
+                    trade,
+                    f"Low-price YES needs AI prob >={config.MIN_AI_PROB_FOR_LOW_PRICE_YES}%",
+                    markets,
+                )
+                results.append({
+                    "ticker": ticker,
+                    "success": False,
+                    "reason": f"Low-price YES needs AI prob >={config.MIN_AI_PROB_FOR_LOW_PRICE_YES}%",
+                })
                 continue
 
             original_count = count

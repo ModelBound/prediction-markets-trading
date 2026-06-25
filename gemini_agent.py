@@ -8,6 +8,7 @@ from openai import OpenAI
 import config
 import modelbound_skills
 import openai_budget
+import web_research
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,12 @@ class TradingAgent:
         self.system_prompt = mb_prompt if mb_prompt else SYSTEM_PROMPT
 
         logger.info(f"TradingAgent initialized with model: {self.model}")
+        if config.RESEARCH_PROVIDER == "free":
+            import web_research
+            backends = web_research.search_backend_status()
+            logger.info(f"Research provider: free (Exa={backends['exa_mcporter']}, DDG={backends['duckduckgo']})")
+        else:
+            logger.info("Research provider: openai (web_search_preview)")
         if mb_prompt:
             logger.info("System prompt loaded from ModelBound")
         else:
@@ -157,7 +164,7 @@ class TradingAgent:
 
     def research_market(self, query: str) -> str:
         """
-        Use OpenAI with web search to research a market question.
+        Research a market question using free web search (default) or OpenAI web search.
 
         Args:
             query: Research question about a market
@@ -165,6 +172,22 @@ class TradingAgent:
         Returns:
             Research findings as text
         """
+        if config.RESEARCH_PROVIDER == "openai":
+            return self._research_market_openai(query)
+        return self._research_market_free(query)
+
+    def _research_market_free(self, query: str) -> str:
+        """Agent-Reach style research: DuckDuckGo/Exa search + Jina Reader (no API cost)."""
+        try:
+            result = web_research.research_query(query)
+            logger.info(f"Free web research: {len(result)} chars for query: {query[:60]}")
+            return result
+        except Exception as e:
+            logger.error(f"Free research query failed: {e}")
+            return f"Research unavailable: {e}"
+
+    def _research_market_openai(self, query: str) -> str:
+        """Legacy OpenAI web_search_preview research (~$0.03/call)."""
         if not openai_budget.can_spend("research"):
             return "Research unavailable: OpenAI daily budget reached"
 
@@ -358,7 +381,7 @@ POSITION SIZING: Propose a reasonable count, but final sizing is enforced in cod
 
 SPECULATIVE BET: You may make ONE speculative trade per day with a lower edge threshold ({config.SPECULATIVE_EDGE_MIN_CENTS}¢), capped at ${config.SPECULATIVE_BET_MAX_DOLLARS:.0f} max. Mark it with "speculative": true.
 
-TRADE FREQUENCY TARGET: Recent fills averaged 6.0 successful trades/day over the last week. Target about {config.TARGET_DAILY_EXECUTED_TRADES} executed trades/day, a 25% increase, by taking more qualified smaller positions when clear edges are available.
+TRADE FREQUENCY: Prefer fewer high-conviction trades over forcing activity. Passing is correct when edge is unclear.
 
 ## Active Positions
 """
@@ -447,6 +470,9 @@ CRITICAL RULES:
 - MANDATORY DIVERSIFICATION: Do not default to NBA/NHL just because they are familiar. Explicitly compare esports, tennis, politics/culture, macro/finance, motorsport, and team sports before choosing.
 - If several markets have similar edge, prefer the category where the portfolio has fewer open positions.
 - Do NOT propose trades with an executable ASK price below {config.MIN_TRADE_PRICE_CENTS}¢ unless you explicitly set "allow_longshot": true and have very specific evidence the market is wrong.
+- Do NOT trade 15-minute crypto price markets (KXSOL15M, KXDOGE15M, etc.) — they are random walks with no predictable edge.
+- If only 1-2 markets are available and edge is marginal, PASS rather than forcing a trade.
+- For YES bets below {config.LOW_PRICE_YES_THRESHOLD_CENTS}¢, you need AI probability ≥ {config.MIN_AI_PROB_FOR_LOW_PRICE_YES}% with supporting research.
 - For sports/esports: the market price IS useful information. If a team is at 45¢, the crowd thinks they have a 45% chance. If you think it's higher based on matchup/context, that's edge.
 
 PRICING: Use the ASK price (not bid) to ensure immediate fill.

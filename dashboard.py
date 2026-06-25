@@ -284,14 +284,19 @@ def record_prediction(ticker: str, title: str, side: str, price: int, probabilit
         json.dump(scorecard, f, indent=2)
 
 
-DROPLET_IP = "159.89.224.165"
-DROPLET_SSH_KEY = os.path.expanduser("~/.ssh/id_rsa_digitalocean")
-DROPLET_DATA_PATH = "/opt/trading-agent/data"
-DROPLET_API_URL = f"http://{DROPLET_IP}:9090"
+DROPLET_IP = os.getenv("DROPLET_IP", "")
+DROPLET_API_PORT = os.getenv("DROPLET_API_PORT", "9090")
+DROPLET_SSH_KEY = os.path.expanduser(os.getenv("DROPLET_SSH_KEY", "~/.ssh/id_rsa_digitalocean"))
+DROPLET_DATA_PATH = os.getenv("DROPLET_DATA_PATH", "/opt/trading-agent/data")
+DROPLET_API_URL = os.getenv("DROPLET_API_URL") or (
+    f"http://{DROPLET_IP}:{DROPLET_API_PORT}" if DROPLET_IP else ""
+)
 
 
 def _sync_to_droplet(filename: str):
     """Push a data file to the droplet via HTTP POST."""
+    if not DROPLET_API_URL:
+        return
     local_path = os.path.join("data", filename)
     try:
         import requests as req
@@ -308,6 +313,8 @@ def _sync_to_droplet(filename: str):
 
 def _sync_from_droplet(filename: str):
     """Pull a data file from the droplet via HTTP GET."""
+    if not DROPLET_API_URL:
+        return
     local_path = os.path.join("data", filename)
     try:
         import requests as req
@@ -976,7 +983,7 @@ HTML_PAGE = Template("""<!DOCTYPE html>
         // Health check - pings droplet every 15 seconds
         function checkHealth() {
             const el = document.getElementById('health-indicator');
-            fetch('http://159.89.224.165:9090/health', {mode: 'cors'})
+            fetch('$droplet_api_url/health', {mode: 'cors'})
                 .then(r => r.json())
                 .then(d => {
                     if (d.status === 'ok') {
@@ -1098,8 +1105,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         }
 
     def _serve_dashboard(self):
-        # Load local data (synced on POST actions, not every page load)
+        # Load local data (synced from droplet on every page load)
         _sync_from_droplet("portfolio_state.json")
+        _sync_from_droplet("cycle_logs.json")
+        _sync_from_droplet("trade_history.json")
+        _sync_from_droplet("review_log.json")
+        _sync_from_droplet("agent_notes.json")
         live = get_live_data()
         cycles = get_cycle_logs()
         trades = get_trade_history()
@@ -1218,6 +1229,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             budget_info=budget_info,
             positions_table=render_positions_table(positions),
             activity_feed=render_activity_feed(trades, review_log, scorecard.get("predictions", []), learning_notes, cycles),
+            droplet_api_url=DROPLET_API_URL or "http://localhost:9090",
         )
 
         self.send_response(200)

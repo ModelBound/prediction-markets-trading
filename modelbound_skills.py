@@ -1,12 +1,12 @@
 """ModelBound integration - loads skills from cached ModelBound content.
 
 Skill sources (in priority order at startup):
-1. `.modelbound/` — written by the ModelBound IDE extension (primary for local dev)
+1. Local workspace files — `.cursor/rules/`, `.kiro/skills/`, `.modelbound/` (from API sync or IDE extension)
 2. `data/modelbound_cache.json` — deployed cache for headless/droplet runs
-3. ModelBound API — optional when MODELBOUND_AUTO_SYNC=true (headless refresh)
+3. ModelBound API — syncs to workspace + cache when token is set and skills are missing/stale
 
-`python sync_skills.py` is optional — use it to build a deploy cache, or enable
-MODELBOUND_AUTO_SYNC on servers without the IDE extension.
+Run `python sync_skills.py` once to pull skills from ModelBound using your API token.
+The script detects your IDE layout and writes to the correct paths automatically.
 """
 import json
 import logging
@@ -29,17 +29,13 @@ def _strip_sync_markers(content: str) -> str:
 
 
 def _load_cache_file():
-    """Load skills from data/modelbound_cache.json into _skill_cache."""
     global _skill_cache
     if not os.path.exists(_cache_file):
         return
     try:
         with open(_cache_file, encoding="utf-8") as f:
             raw = json.load(f)
-        loaded = {
-            k: v for k, v in raw.items()
-            if k != META_KEY and isinstance(v, str)
-        }
+        loaded = {k: v for k, v in raw.items() if k != META_KEY and isinstance(v, str)}
         _skill_cache.update(loaded)
         meta = raw.get(META_KEY)
         if meta:
@@ -47,22 +43,19 @@ def _load_cache_file():
                 info = json.loads(meta) if isinstance(meta, str) else meta
                 logger.info(
                     f"Loaded {len(loaded)} skills from cache file "
-                    f"(synced {info.get('synced_at', '?')}, source={info.get('source', '?')})"
+                    f"(synced {info.get('synced_at', '?')})"
                 )
             except (json.JSONDecodeError, TypeError):
                 logger.info(f"Loaded {len(loaded)} skills from cache file")
-        else:
-            logger.info(f"Loaded {len(loaded)} skills from cache file")
     except Exception as e:
         logger.warning(f"Failed to load ModelBound cache file: {e}")
 
 
-def _merge_ide_skills():
-    """Merge skills from .modelbound/ (IDE extension). Local files win over cache."""
+def _merge_workspace_skills():
     global _skill_cache
-    ide_skills = load_skills_from_workspace()
-    if ide_skills:
-        _skill_cache.update(ide_skills)
+    workspace = load_skills_from_workspace()
+    if workspace:
+        _skill_cache.update(workspace)
 
 
 def _cache_age_hours() -> float | None:
@@ -85,32 +78,27 @@ def _cache_age_hours() -> float | None:
 
 
 def _maybe_auto_sync():
-    """Optional API refresh for headless servers (droplet without IDE extension)."""
-    if not config.MODELBOUND_AUTO_SYNC:
-        return
-
-    from modelbound_client import get_api_token
+    """Sync from ModelBound API when token is set and local skills are missing/stale."""
+    from modelbound_client import ModelBoundClient, get_api_token
 
     if not get_api_token():
         return
 
-    # IDE workspace skills are authoritative when present
-    if load_skills_from_workspace():
-        logger.info("IDE skills present — skipping ModelBound API auto-sync")
-        return
-
+    workspace = load_skills_from_workspace()
     age = _cache_age_hours()
     max_age = config.MODELBOUND_SYNC_MAX_AGE_HOURS
-    if age is not None and age < max_age and _skill_cache:
+
+    if workspace and not config.MODELBOUND_AUTO_SYNC:
+        return
+    if workspace and age is not None and age < max_age:
         return
 
     try:
-        from modelbound_client import ModelBoundClient
-
-        reason = "missing skills" if not _skill_cache else f"cache is {age:.1f}h old"
-        logger.info(f"Auto-syncing ModelBound skills from API ({reason})...")
+        reason = "no local skills" if not workspace else f"cache {age:.1f}h old"
+        logger.info(f"Syncing ModelBound skills from API ({reason})...")
         client = ModelBoundClient()
-        pulled = client.pull_skills_for_repo()
+        pulled = client.sync_skills_to_workspace()
+
         global _skill_cache
         _skill_cache.update({k: v for k, v in pulled.items() if k != META_KEY})
 
@@ -118,11 +106,10 @@ def _maybe_auto_sync():
         with open(_cache_file, "w", encoding="utf-8") as f:
             json.dump(pulled, f, indent=2)
     except Exception as e:
-        logger.warning(f"ModelBound API auto-sync skipped: {e}")
+        logger.warning(f"ModelBound API sync skipped: {e}")
 
 
 def load_skill(skill_key: str) -> str | None:
-    """Load a skill by key."""
     _load_all()
     content = _skill_cache.get(skill_key)
     return _strip_sync_markers(content) if content else None
@@ -132,10 +119,9 @@ def _load_all():
     global _skill_cache
     if _skill_cache:
         return
+    _maybe_auto_sync()
     _load_cache_file()
-    _merge_ide_skills()
-    if not _skill_cache:
-        _maybe_auto_sync()
+    _merge_workspace_skills()
 
 
 def get_system_prompt() -> str | None:
@@ -168,13 +154,9 @@ def warm_cache():
     """Pre-load skills on startup."""
     global _skill_cache
     _skill_cache = {}
-    had_ide = bool(load_skills_from_workspace())
-    _load_cache_file()
-    _merge_ide_skills()
-    if not _skill_cache:
-        _maybe_auto_sync()
-    if had_ide:
-        source = "IDE (.modelbound/)"
+    _load_all()
+    if load_skills_from_workspace():
+        source = "workspace (.modelbound/ + IDE paths)"
     elif _skill_cache:
         source = "cache/API"
     else:

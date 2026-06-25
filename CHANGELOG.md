@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ModelBound MCP endpoint default: `https://mcp.modelbound.co/` (was `/mcp`)
-- `MODELBOUND_AUTO_SYNC` defaults to `false`; IDE extension path is primary for local dev
+- ModelBound sync writes to `.modelbound/` (canonical) plus IDE-native paths from API
+  metadata (`.cursor/rules/`, `.kiro/skills/`) based on detected IDE layout
+- Agent loads skills recursively from all workspace paths, not just `.modelbound/`
 
 ## [0.2.0] - 2026-06-25
 

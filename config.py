@@ -38,6 +38,8 @@ MODELBOUND_REQUEST_TIMEOUT = int(os.getenv("MODELBOUND_REQUEST_TIMEOUT", "30"))
 # Optional API pull on startup (headless/droplet). IDE extension users can leave this false.
 MODELBOUND_AUTO_SYNC = os.getenv("MODELBOUND_AUTO_SYNC", "false").lower() in ("1", "true", "yes")
 MODELBOUND_SYNC_MAX_AGE_HOURS = int(os.getenv("MODELBOUND_SYNC_MAX_AGE_HOURS", "24"))
+MODELBOUND_IDE = os.getenv("MODELBOUND_IDE", "auto")  # auto, cursor, kiro, claude
+MODELBOUND_SYNC_IDE_PATHS = os.getenv("MODELBOUND_SYNC_IDE_PATHS", "true").lower() in ("1", "true", "yes")
 
 # DigitalOcean
 DIGITALOCEAN_TOKEN = os.getenv("DIGITALOCEAN_TOKEN")

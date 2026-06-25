@@ -140,32 +140,29 @@ OpenAI:
 
 ModelBound:
 
-1. Create your own [ModelBound](https://modelbound.co) account and API key.
-2. Store it locally as `MODELBOUND_API_TOKEN` or `MODELBOUND_API_KEY` in `.env`.
+1. Create a [ModelBound](https://modelbound.co) account and add your API token to `.env`
+   as `MODELBOUND_API_TOKEN` or `MODELBOUND_API_KEY`.
 
-**Local development (recommended):** Install the
-[ModelBound Cursor extension](https://github.com/ModelBound/modelbound-cursor-extension)
-and pull skills into `.modelbound/`. The agent loads them automatically at
-startup — no sync script required.
-
-**Headless / droplet deployment:** Build a cache file before deploying:
+2. Sync skills once (uses the API to discover skills and write them locally):
 
 ```bash
-python sync_skills.py --api    # or --local if .modelbound/ is populated
-./deploy_droplet.sh <ip>       # copies data/modelbound_cache.json when present
+python sync_skills.py
 ```
 
-Alternatively, set `MODELBOUND_AUTO_SYNC=true` on the server to pull from the
-ModelBound API on startup (requires token in the droplet `.env`).
+This writes:
+- **`.modelbound/`** — canonical copies (always; what the Python agent reads)
+- **`.cursor/rules/`** — Cursor-native paths when `source_platform=cursor`
+- **`.kiro/skills/`** — Kiro paths when `.kiro/` exists and `source_platform=kiro`
+- **`data/modelbound_cache.json`** — portable cache for droplet deployment
 
-Do not commit API keys or `data/modelbound_cache.json`.
+The ModelBound Cursor extension can also pull skills; the agent reads from all of
+the above paths automatically at startup.
 
-The agent uses skills for the system prompt, market analysis, portfolio/risk
-context, and reviewer hints. Skill keys include `trading_agent_system_prompt`,
-`market_analysis`, and `portfolio_risk`.
+For droplets without IDE files: deploy the cache via `./deploy_droplet.sh <ip>`, or
+set `MODELBOUND_AUTO_SYNC=true` with your token in the droplet `.env`.
 
-Contributors can customize `MODELBOUND_SKILL_REPO` for API pulls, or use
-`MODELBOUND_MCP_URL` if the endpoint changes (default: `https://mcp.modelbound.co/`).
+Do not commit API keys or synced skill files (`.modelbound/`, `.cursor/`, `.kiro/`,
+`data/modelbound_cache.json` are gitignored).
 
 DigitalOcean:
 

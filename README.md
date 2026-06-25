@@ -115,6 +115,9 @@ Optional environment variables:
 Verify search backends at agent startup (log line: `Research provider: free`).
 Run unit tests: `python -m unittest tests/test_web_research.py`
 
+See [CHANGELOG.md](CHANGELOG.md) and [GitHub Releases](https://github.com/ModelBound/prediction-markets-trading/releases)
+for version history.
+
 ## Getting API Keys
 
 Kalshi:

@@ -50,6 +50,9 @@ using `PREDICTION_MARKET_PROVIDER=polymarket`.
 - `settlement_detector.py` - scorecard reconciliation from settlements
 - `free_research.py` - no-cost weather research helpers
 - `web_research.py` - free web search (Exa/mcporter, DuckDuckGo, Jina Reader)
+- `modelbound_client.py` - ModelBound API client for skill sync
+- `modelbound_skills.py` - runtime skill loader (reads local cache)
+- `sync_skills.py` - pull skills from ModelBound into `data/modelbound_cache.json`
 - `ai_provider.py` - AI provider extension protocol
 - `strategy.py` - strategy/research/review extension protocols
 - `dashboard.py` - local dashboard
@@ -137,10 +140,32 @@ OpenAI:
 
 ModelBound:
 
-1. Create your own ModelBound account/API token.
-2. Store it locally as `MODELBOUND_API_TOKEN`.
-3. Sync skills/prompts into `data/modelbound_cache.json` for runtime use.
-4. Do not commit ModelBound tokens or private skill caches.
+1. Create your own [ModelBound](https://modelbound.co) account and API key.
+2. Store it locally as `MODELBOUND_API_TOKEN` or `MODELBOUND_API_KEY` in `.env`.
+
+**Local development (recommended):** Install the
+[ModelBound Cursor extension](https://github.com/ModelBound/modelbound-cursor-extension)
+and pull skills into `.modelbound/`. The agent loads them automatically at
+startup — no sync script required.
+
+**Headless / droplet deployment:** Build a cache file before deploying:
+
+```bash
+python sync_skills.py --api    # or --local if .modelbound/ is populated
+./deploy_droplet.sh <ip>       # copies data/modelbound_cache.json when present
+```
+
+Alternatively, set `MODELBOUND_AUTO_SYNC=true` on the server to pull from the
+ModelBound API on startup (requires token in the droplet `.env`).
+
+Do not commit API keys or `data/modelbound_cache.json`.
+
+The agent uses skills for the system prompt, market analysis, portfolio/risk
+context, and reviewer hints. Skill keys include `trading_agent_system_prompt`,
+`market_analysis`, and `portfolio_risk`.
+
+Contributors can customize `MODELBOUND_SKILL_REPO` for API pulls, or use
+`MODELBOUND_MCP_URL` if the endpoint changes (default: `https://mcp.modelbound.co/`).
 
 DigitalOcean:
 

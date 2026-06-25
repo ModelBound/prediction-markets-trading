@@ -1,61 +1,91 @@
-"""Sync skills from ModelBound to local cache for the agent to use at runtime.
-Run this locally (where MCP is available) to populate the cache,
-then deploy the cache file to the droplet.
+"""Optional: build data/modelbound_cache.json for headless deployment.
 
-Usage: python sync_skills.py
+You do NOT need this script if you use the ModelBound IDE extension — it writes
+skills to `.modelbound/` and the agent loads them automatically at startup.
+
+Use this script when you need a portable cache file, e.g. before deploying to a
+droplet without the IDE extension:
+
+    python sync_skills.py              # .modelbound/ first, else API
+    python sync_skills.py --local      # .modelbound/ only
+    python sync_skills.py --api        # ModelBound API only (for deploy bundles)
+
+Requires MODELBOUND_API_TOKEN (or MODELBOUND_API_KEY) in .env for --api.
+Never commit `.env`, API keys, or `data/modelbound_cache.json`.
 """
+import argparse
 import json
 import os
 import sys
 
+import config
+from modelbound_client import (
+    META_KEY,
+    ModelBoundClient,
+    get_api_token,
+    load_skills_from_workspace,
+)
 
-def sync_from_corpus_data():
-    """
-    Pull skill content from ModelBound corpus and write to local cache.
-    This script is meant to run in the IDE where MCP tools are available.
-    It writes data/modelbound_cache.json which the agent reads at runtime.
-    """
-    # These are the skill contents from our corpus (pre-fetched)
-    # In practice, run this from an IDE session where MCP tools pull live data
-    cache_file = "data/modelbound_cache.json"
 
-    # Check if we can read from existing .modelbound/ files
-    skills = {}
-
-    mb_dir = ".modelbound"
-    if os.path.exists(mb_dir):
-        for fname in os.listdir(mb_dir):
-            if fname.endswith(".md"):
-                key = fname.replace(".md", "").replace("-", "_")
-                with open(os.path.join(mb_dir, fname), "r") as f:
-                    skills[key] = f.read()
-                print(f"  Loaded: {key} ({len(skills[key])} chars)")
-
-    # Also check .kiro/skills/
-    kiro_skills = ".kiro/skills"
-    if os.path.exists(kiro_skills):
-        for fname in os.listdir(kiro_skills):
-            if fname.endswith(".md"):
-                key = fname.replace(".md", "").replace("-", "_")
-                if key not in skills:
-                    with open(os.path.join(kiro_skills, fname), "r") as f:
-                        skills[key] = f.read()
-                    print(f"  Loaded: {key} ({len(skills[key])} chars)")
-
-    if not skills:
-        print("No skills found in .modelbound/ or .kiro/skills/")
-        print("Create skill files there first, or use ModelBound MCP tools.")
-        sys.exit(1)
-
-    # Write cache
-    os.makedirs("data", exist_ok=True)
-    with open(cache_file, "w") as f:
+def write_cache(skills: dict[str, str], cache_file: str = "data/modelbound_cache.json") -> int:
+    os.makedirs(os.path.dirname(cache_file) or ".", exist_ok=True)
+    with open(cache_file, "w", encoding="utf-8") as f:
         json.dump(skills, f, indent=2)
 
-    print(f"\nWrote {len(skills)} skills to {cache_file}")
-    print("Deploy this file to the droplet: scp data/modelbound_cache.json root@<IP>:/opt/trading-agent/data/")
+    count = len([k for k in skills if k != META_KEY])
+    print(f"\nWrote {count} skills to {cache_file}")
+    print("Deploy to droplet: ./deploy_droplet.sh <ip>  (includes cache if present)")
+    return count
+
+
+def sync_from_api() -> dict[str, str]:
+    if not get_api_token():
+        raise RuntimeError(
+            "ModelBound API token not set. Add MODELBOUND_API_TOKEN or "
+            "MODELBOUND_API_KEY to .env. See .env.example."
+        )
+    client = ModelBoundClient()
+    print(f"Pulling skills from ModelBound API (repo={config.MODELBOUND_SKILL_REPO})...")
+    return client.pull_skills_for_repo()
+
+
+def sync_skills(*, local_only: bool = False, api_only: bool = False) -> dict[str, str]:
+    """Build deploy cache. Returns skill dict."""
+    skills: dict[str, str] = {}
+
+    if not api_only:
+        skills = load_skills_from_workspace()
+        if skills:
+            print(f"Using {len(skills)} skills from .modelbound/ (IDE extension)")
+
+    if local_only:
+        if not skills:
+            raise RuntimeError(
+                "No skills in .modelbound/ or .kiro/skills/. "
+                "Pull skills via the ModelBound IDE extension first."
+            )
+    elif api_only or not skills:
+        skills = sync_from_api()
+
+    write_cache(skills)
+    return skills
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Optional: build modelbound_cache.json for droplet deployment",
+    )
+    parser.add_argument("--local", action="store_true", help="Use .modelbound/ only")
+    parser.add_argument("--api", action="store_true", help="Use ModelBound API only")
+    args = parser.parse_args()
+
+    print("Building ModelBound skill cache (optional — IDE extension users can skip this)...")
+    try:
+        sync_skills(local_only=args.local, api_only=args.api)
+    except Exception as e:
+        print(f"Sync failed: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    print("Syncing ModelBound skills to local cache...")
-    sync_from_corpus_data()
+    main()

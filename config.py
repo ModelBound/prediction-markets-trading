@@ -28,6 +28,16 @@ GEMINI_TOKEN = os.getenv("GEMINI_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai")
 MODELBOUND_API_TOKEN = os.getenv("MODELBOUND_API_TOKEN")
+MODELBOUND_API_KEY = os.getenv("MODELBOUND_API_KEY")  # alias supported by ModelBound tooling
+
+# ModelBound skill sync (optional — agent falls back to hardcoded prompts without cache)
+MODELBOUND_MCP_URL = os.getenv("MODELBOUND_MCP_URL", "https://mcp.modelbound.co/")
+MODELBOUND_SKILL_REPO = os.getenv("MODELBOUND_SKILL_REPO", "Trading")
+MODELBOUND_SKILL_LIMIT = int(os.getenv("MODELBOUND_SKILL_LIMIT", "50"))
+MODELBOUND_REQUEST_TIMEOUT = int(os.getenv("MODELBOUND_REQUEST_TIMEOUT", "30"))
+# Optional API pull on startup (headless/droplet). IDE extension users can leave this false.
+MODELBOUND_AUTO_SYNC = os.getenv("MODELBOUND_AUTO_SYNC", "false").lower() in ("1", "true", "yes")
+MODELBOUND_SYNC_MAX_AGE_HOURS = int(os.getenv("MODELBOUND_SYNC_MAX_AGE_HOURS", "24"))
 
 # DigitalOcean
 DIGITALOCEAN_TOKEN = os.getenv("DIGITALOCEAN_TOKEN")

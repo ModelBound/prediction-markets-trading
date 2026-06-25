@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- ModelBound skill integration: pull skills via API (`modelbound_client.py`), load from
+  `.modelbound/` IDE extension files at startup, optional `sync_skills.py` for deploy caches
+- Support `MODELBOUND_API_KEY` as alias for `MODELBOUND_API_TOKEN`
+
+### Changed
+
+- ModelBound MCP endpoint default: `https://mcp.modelbound.co/` (was `/mcp`)
+- `MODELBOUND_AUTO_SYNC` defaults to `false`; IDE extension path is primary for local dev
+
 ## [0.2.0] - 2026-06-25
 
 ### Added

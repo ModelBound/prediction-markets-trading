@@ -12,6 +12,37 @@ import web_research
 
 logger = logging.getLogger(__name__)
 
+RESPONSE_FORMAT = """## Response Format
+You MUST respond with valid JSON in this exact format:
+{
+  "reasoning": "Your detailed analysis of the current market state and opportunities",
+  "opportunities": [
+    {
+      "ticker": "MARKET-TICKER",
+      "title": "Market question",
+      "side": "yes or no",
+      "market_price": 65,
+      "my_probability": 80,
+      "edge": 15
+    }
+  ],
+  "action": "trade" or "pass",
+  "trades": [
+    {
+      "ticker": "MARKET-TICKER",
+      "side": "yes" or "no",
+      "count": 5,
+      "price": 65,
+      "my_probability": 80,
+      "reasoning": "Why this specific trade"
+    }
+  ],
+  "notes_update": "Any patterns or insights to remember for future cycles",
+  "pass_reason": "If passing, explain why (only if action is pass)"
+}
+The "action" field is REQUIRED on every response. Use "trade" when placing orders, "pass" when skipping.
+"""
+
 SYSTEM_PROMPT = """You are an autonomous prediction market trading agent operating on Kalshi with real money. You execute a disciplined trading cycle, analyzing markets, researching opportunities, and making trade decisions.
 
 ## Core Philosophy
@@ -41,35 +72,75 @@ SYSTEM_PROMPT = """You are an autonomous prediction market trading agent operati
 - Don't chase losses
 - Don't over-trade
 
-## Response Format
-You MUST respond with valid JSON in this exact format:
-{
-  "reasoning": "Your detailed analysis of the current market state and opportunities",
-  "opportunities": [
-    {
-      "ticker": "MARKET-TICKER",
-      "title": "Market question",
-      "side": "yes or no",
-      "market_price": 65,
-      "my_probability": 80,
-      "edge": 15
-    }
-  ],
-  "action": "trade" or "pass",
-  "trades": [
-    {
-      "ticker": "MARKET-TICKER",
-      "side": "yes" or "no",
-      "count": 5,
-      "price": 65,
-      "my_probability": 80,
-      "reasoning": "Why this specific trade"
-    }
-  ],
-  "notes_update": "Any patterns or insights to remember for future cycles",
-  "pass_reason": "If passing, explain why (only if action is pass)"
-}
-"""
+""" + RESPONSE_FORMAT
+
+
+def _compose_system_prompt(modelbound_prompt: str | None) -> str:
+    """Ensure every system prompt includes the required JSON response schema."""
+    base = modelbound_prompt.strip() if modelbound_prompt else SYSTEM_PROMPT
+    if '"action"' in base and "Response Format" in base:
+        return base
+    return f"{base.rstrip()}\n\n{RESPONSE_FORMAT}"
+
+
+def _opportunities_to_trades(opportunities: list) -> list:
+    """Convert LLM opportunity objects into executable trade proposals."""
+    trades = []
+    for opp in opportunities:
+        ticker = opp.get("ticker")
+        if not ticker:
+            continue
+        price = opp.get("price") or opp.get("market_price") or 0
+        trades.append({
+            "ticker": ticker,
+            "title": opp.get("title", ""),
+            "side": str(opp.get("side", "yes")).lower(),
+            "count": 1,
+            "price": int(price),
+            "my_probability": opp.get("my_probability", 0),
+            "reasoning": opp.get("reasoning", ""),
+        })
+    return trades
+
+
+def _normalize_decision(decision: dict) -> dict:
+    """Repair common LLM response omissions before execution."""
+    if not isinstance(decision, dict):
+        return {
+            "action": "pass",
+            "pass_reason": "Invalid response type",
+            "trades": [],
+            "reasoning": "",
+        }
+
+    if "action" not in decision and "decision" in decision:
+        decision["action"] = decision["decision"]
+
+    trades = decision.get("trades") or []
+    if not trades and decision.get("opportunities"):
+        trades = _opportunities_to_trades(decision["opportunities"])
+        if trades:
+            decision["trades"] = trades
+
+    if "action" not in decision:
+        if trades:
+            decision["action"] = "trade"
+            logger.warning("LLM omitted action field; inferred trade from trades/opportunities")
+        else:
+            decision["action"] = "pass"
+            decision["pass_reason"] = decision.get("pass_reason") or "No trade action specified"
+
+    action = str(decision.get("action", "pass")).lower().strip()
+    if action in {"buy", "execute", "trade"}:
+        decision["action"] = "trade"
+    else:
+        decision["action"] = "pass"
+
+    if decision["action"] == "trade" and not decision.get("trades"):
+        decision["action"] = "pass"
+        decision["pass_reason"] = "Trade action but no trades specified"
+
+    return decision
 
 
 class TradingAgent:
@@ -82,7 +153,7 @@ class TradingAgent:
 
         # Load system prompt from ModelBound (falls back to hardcoded)
         mb_prompt = modelbound_skills.get_system_prompt()
-        self.system_prompt = mb_prompt if mb_prompt else SYSTEM_PROMPT
+        self.system_prompt = _compose_system_prompt(mb_prompt)
 
         logger.info(f"TradingAgent initialized with model: {self.model}")
         if config.RESEARCH_PROVIDER == "free":
@@ -131,16 +202,7 @@ class TradingAgent:
             logger.info(f"OpenAI response length: {len(response_text)} chars")
 
             # Parse JSON response
-            decision = json.loads(response_text)
-
-            # Validate required fields
-            if "action" not in decision:
-                decision["action"] = "pass"
-                decision["pass_reason"] = "Invalid response format - defaulting to pass"
-
-            if decision["action"] == "trade" and not decision.get("trades"):
-                decision["action"] = "pass"
-                decision["pass_reason"] = "Trade action but no trades specified"
+            decision = _normalize_decision(json.loads(response_text))
 
             return decision
 
@@ -478,8 +540,8 @@ CRITICAL RULES:
 PRICING: Use the ASK price (not bid) to ensure immediate fill.
 
 Remember: Passing is a valid and often correct decision. Only trade with clear edge.
-Respond with JSON only.
-"""
+
+""" + RESPONSE_FORMAT
 
     # Append strategy context from ModelBound if available
     strategy = modelbound_skills.get_strategy_context()

@@ -693,7 +693,7 @@ def render_activity_feed(trades, reviews, scorecard_predictions, lessons, cycles
     for e in events[:60]:
         ts = to_est(e["ts"])
         badge_html = f'<span class="badge {e["badge_class"]}">{e["badge"]}</span>'
-        status_html = f' <span style="color:#58a6ff;">{e["status"]}</span>' if e["status"] else ""
+        status_html = f' <span style="color:#58a6ff;">· {e["status"]}</span>' if e["status"] else ""
         extra_html = _accordion(e["extra"]) if e.get("extra") else ""
 
         rows += (

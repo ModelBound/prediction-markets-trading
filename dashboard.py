@@ -406,7 +406,7 @@ def render_cycles_table(cycles):
         action = c.get("action", "?")
         badge_class = "badge-pass" if action in ("pass", "monitor") else "badge-trade" if action == "trade" else "badge-error"
         ts = to_est(c.get("start", ""))
-        reasoning = c.get("reasoning", c.get("pass_reason", ""))
+        reasoning = c.get("reasoning") or c.get("pass_reason") or c.get("skip_reason") or ""
         balance = c.get("balance", 0) / 100 if c.get("balance") else 0
         rows += (
             f'<tr><td class="timestamp">{ts}</td>'
@@ -603,21 +603,38 @@ def render_activity_feed(trades, reviews, scorecard_predictions, lessons, cycles
     """Render a unified activity feed combining all events chronologically."""
     events = []
 
-    # Add recent cycles (pass/trade attempts) so the feed is never empty
+    # Add recent cycles so the feed stays current (pass, skip, trade, monitor, etc.)
     if cycles:
-        for c in cycles[-20:]:
+        cycle_badges = {
+            "pass": ("PASS", "badge-pass", "Agent cycle — no trade"),
+            "skip": ("SKIP", "badge-pass", "Agent cycle — skipped"),
+            "trade": ("TRADE", "badge-trade", "Agent cycle — traded"),
+            "monitor": ("MONITOR", "badge-pass", "Agent cycle — monitoring only"),
+            "busted": ("BUSTED", "badge-error", "Agent cycle — bankroll depleted"),
+            "error": ("ERROR", "badge-error", "Agent cycle — error"),
+        }
+        for c in cycles[-30:]:
             action = c.get("action", "")
-            if action == "pass":
-                events.append({
-                    "ts": c.get("start", ""),
-                    "type": "cycle",
-                    "badge": "PASS",
-                    "badge_class": "badge-pass",
-                    "title": "Agent cycle — no trade",
-                    "detail": c.get("pass_reason", c.get("reasoning", ""))[:100],
-                    "status": f"{c.get('markets_available', '?')} markets scanned",
-                    "extra": "",
-                })
+            badge, badge_class, title = cycle_badges.get(
+                action,
+                (action.upper() or "CYCLE", "badge-pass", f"Agent cycle — {action or 'update'}"),
+            )
+            detail = (
+                c.get("pass_reason")
+                or c.get("skip_reason")
+                or c.get("reasoning")
+                or ""
+            )[:100]
+            events.append({
+                "ts": c.get("start", ""),
+                "type": "cycle",
+                "badge": badge,
+                "badge_class": badge_class,
+                "title": title,
+                "detail": detail,
+                "status": f"{c.get('markets_available', '?')} markets scanned",
+                "extra": "",
+            })
 
     # Add trades
     for t in trades:

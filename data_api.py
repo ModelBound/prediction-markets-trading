@@ -95,7 +95,16 @@ class DataAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(json.dumps(data, default=str).encode())
+        try:
+            self.wfile.write(json.dumps(data, default=str).encode())
+        except BrokenPipeError:
+            pass
+
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except BrokenPipeError:
+            pass
 
     def log_message(self, format, *args):
         pass  # Suppress request logs

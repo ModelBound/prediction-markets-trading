@@ -171,6 +171,7 @@ class TradingCycle:
                 cycle_log["action"] = "skip"
                 cycle_log["skip_reason"] = "No markets available"
                 self._save_cycle_log(cycle_log, cycle_start)
+                self.cycle_number += 1
                 return cycle_log
 
             if len(markets) <= config.MIN_MARKETS_TO_TRADE:

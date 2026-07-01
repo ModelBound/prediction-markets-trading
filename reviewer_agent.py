@@ -11,39 +11,39 @@ import openai_budget
 
 logger = logging.getLogger(__name__)
 
-REVIEWER_SYSTEM_PROMPT = """You are a quick sanity-check for a prediction market trading agent. Your bias should be toward APPROVING trades. The agent has already done research and calculated an edge — you're just catching obvious errors.
+REVIEWER_SYSTEM_PROMPT = """You are a risk-focused gatekeeper for a prediction market trading agent. Your job is to REJECT bad trades. The agent has a history of overconfident, miscalibrated bets — especially low-price longshots and commodity bracket markets.
 
 ## Edge Math
 - For YES trades: edge = AI Probability - YES price.
 - For NO trades: edge = (100 - AI Probability) - NO price.
-- A market implied probability that differs from the agent estimate is the whole reason to trade. Do NOT call that a contradiction or math error when the formula above gives a positive edge.
 
-## Only REJECT if:
-- The math is clearly wrong (e.g., agent says 70% probability but calculated a negative edge)
-- The research DIRECTLY contradicts the bet (e.g., forecast says 90°F but agent bets on under 80°F)
-- The agent is betting on something that already happened or is impossible
-- The position size would blow up the account
+## REJECT if ANY of these apply:
+- The agent's AI probability looks miscalibrated (e.g., claims 60%+ on a contract priced below 25¢)
+- No research findings support the trade direction
+- The math is wrong or the claimed edge contradicts the stated probability and price
+- The research DIRECTLY contradicts the bet
+- The event already happened or the bet is impossible under settlement rules
+- The position would concentrate too much of a tiny account
+- You are uncertain — uncertainty means REJECT, not approve
+- Low-price YES longshots without authoritative settlement data cited in research
 
-## APPROVE if:
-- The reasoning is coherent, even if you'd estimate differently
-- The edge is positive and the logic makes sense
-- It's a live event and the agent has a directional view
-- The research supports the direction even if it's not conclusive
-- You're uncertain — uncertainty means APPROVE with lower confidence
+## APPROVE only if:
+- Research clearly supports the directional bet with specific evidence
+- The edge math is coherent and plausible (not fantasy 50¢ edges on 5¢ contracts)
+- The market price and agent estimate divergence is explained with concrete facts
+- You would bet your own money at this price
 
 ## REDIRECT (suggest alternative) if:
-- The research contradicts THIS specific bet but SUPPORTS a nearby alternative
-- Example: forecast says 93°F, agent bet on 95-96° bracket → suggest the 92-93° or 93-94° bracket instead
-- Example: agent bet on Team A winning by 5+, but data suggests a close game → suggest Team A just winning
-- When redirecting: set approved=false, and fill in suggested_ticker, suggested_side, suggested_price from the AVAILABLE MARKETS list provided
+- The research contradicts THIS bet but supports a nearby alternative in the available markets list
+- When redirecting: set approved=false, fill suggested_ticker, suggested_side, suggested_price
 
-## Key principle: We'd rather make 10 trades and lose on 3 than make 0 trades. Volume with positive expected value beats perfection.
+## Key principle: One bad longshot costs many small wins. Reject aggressively.
 
 Respond with JSON only:
 {
   "approved": true or false,
   "confidence": 0-100,
-  "concerns": ["only list CRITICAL issues, not nitpicks"],
+  "concerns": ["list specific issues"],
   "recommendation": "Brief note",
   "suggested_ticker": "ALTERNATIVE-TICKER or empty string if no suggestion",
   "suggested_side": "yes or no, or empty string",
@@ -53,13 +53,13 @@ Respond with JSON only:
 
 @dataclass
 class ReviewResult:
-    approved: bool = True
+    approved: bool = False
     confidence: int = 50
     concerns: list = field(default_factory=list)
     recommendation: str = ""
-    suggested_ticker: str = ""  # Alternative ticker if rejecting (redirect trade)
-    suggested_side: str = ""  # Side for the suggested alternative
-    suggested_price: int = 0  # Price for the suggested alternative
+    suggested_ticker: str = ""
+    suggested_side: str = ""
+    suggested_price: int = 0
 
 
 class ReviewerAgent:
@@ -88,10 +88,10 @@ class ReviewerAgent:
 
         if not openai_budget.can_spend("review"):
             return ReviewResult(
-                approved=True,
+                approved=False,
                 confidence=0,
                 concerns=["Review skipped by OpenAI daily budget guard"],
-                recommendation="Proceeding after deterministic pre-flight checks",
+                recommendation="Rejecting: cannot validate without review",
             )
 
         review_prompt = self._build_review_prompt(trade, context)
@@ -113,7 +113,7 @@ class ReviewerAgent:
             result_data = json.loads(result_text)
 
             review = ReviewResult(
-                approved=result_data.get("approved", True),
+                approved=result_data.get("approved", False),
                 confidence=min(100, max(0, result_data.get("confidence", 50))),
                 concerns=result_data.get("concerns", []),
                 recommendation=result_data.get("recommendation", ""),
@@ -121,14 +121,6 @@ class ReviewerAgent:
                 suggested_side=result_data.get("suggested_side", ""),
                 suggested_price=result_data.get("suggested_price", 0),
             )
-
-            override = self._deterministic_override(review, trade, context)
-            if override:
-                logger.info(
-                    "Reviewer rejection overridden by deterministic edge checks "
-                    f"for {trade.get('ticker', '?')}: {override.recommendation}"
-                )
-                review = override
 
             status = "APPROVED" if review.approved else "REJECTED"
             logger.info(
@@ -142,15 +134,21 @@ class ReviewerAgent:
             return review
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Reviewer JSON parse error: {e}. Approving by default.")
-            return ReviewResult(approved=True, confidence=30,
-                              concerns=["Review response unparseable"],
-                              recommendation="Proceeding with caution")
+            logger.warning(f"Reviewer JSON parse error: {e}. Rejecting by default.")
+            return ReviewResult(
+                approved=False,
+                confidence=30,
+                concerns=["Review response unparseable"],
+                recommendation="Rejecting: review output invalid",
+            )
         except Exception as e:
-            logger.warning(f"Reviewer API error: {e}. Approving by default.")
-            return ReviewResult(approved=True, confidence=0,
-                              concerns=[f"Review failed: {e}"],
-                              recommendation="Review skipped due to error")
+            logger.warning(f"Reviewer API error: {e}. Rejecting by default.")
+            return ReviewResult(
+                approved=False,
+                confidence=0,
+                concerns=[f"Review failed: {e}"],
+                recommendation="Rejecting: review unavailable",
+            )
 
     def _build_review_prompt(self, trade: dict, context: dict) -> str:
         """Build the review prompt with full trade context."""
@@ -195,90 +193,11 @@ class ReviewerAgent:
 {modelbound_skills.get_reviewer_context(market_data.get('category', 'general'))}
 """
 
-        # Add related markets for redirect suggestions
         if related_markets:
             prompt += "\n## AVAILABLE ALTERNATIVE MARKETS (same event, different brackets)\n"
             for m in related_markets[:10]:
                 prompt += f"- {m['ticker']}: \"{m.get('title', '')}\" | YES bid/ask: {m.get('yes_bid', '?')}¢/{m.get('yes_ask', '?')}¢\n"
             prompt += "\nIf rejecting, pick the best alternative from above based on the research data.\n"
 
-        prompt += "\nEvaluate this trade. Approve, or redirect to a better alternative. Respond with JSON."
+        prompt += "\nEvaluate this trade. Approve only with strong evidence; otherwise reject. Respond with JSON."
         return prompt
-
-    def _deterministic_override(self, review: ReviewResult, trade: dict, context: dict) -> ReviewResult | None:
-        """Approve false-negative reviewer rejects when deterministic checks are strong."""
-        if review.approved:
-            return None
-
-        side = str(trade.get("side", "yes")).lower()
-        price = self._safe_number(trade.get("price", 0))
-        ai_probability = self._safe_number(trade.get("my_probability", 0))
-        if 0 < ai_probability <= 1:
-            ai_probability *= 100
-
-        if side == "no":
-            calculated_edge = (100 - ai_probability) - price
-        else:
-            calculated_edge = ai_probability - price
-
-        is_speculative = bool(trade.get("speculative", False))
-        min_edge = config.SPECULATIVE_EDGE_MIN_CENTS if is_speculative else config.MIN_EDGE_CENTS
-        market_data = context.get("market_data", {})
-        spread = self._safe_number(market_data.get("spread", 99))
-        volume = self._safe_number(market_data.get("volume", 0))
-        days_to_close = self._safe_number(market_data.get("days_to_close", 999))
-        concerns_text = " ".join(review.concerns + [review.recommendation]).lower()
-
-        if calculated_edge < min_edge or price < config.MIN_TRADE_PRICE_CENTS:
-            return None
-        if self._has_hard_rejection_reason(concerns_text):
-            return None
-
-        math_false_reject = any(
-            token in concerns_text
-            for token in ("math", "calculation", "miscalculation", "implied probability", "claimed edge", "does not support")
-        )
-        no_research_reject = "no research" in concerns_text or "without supporting data" in concerns_text
-        liquid_market = volume >= 500 and spread <= 5
-        strong_liquid_market = volume >= 1000 and spread <= 2 and calculated_edge >= max(10, min_edge + 3)
-        near_term = days_to_close <= 2
-
-        if math_false_reject and liquid_market:
-            return ReviewResult(
-                approved=True,
-                confidence=max(35, min(review.confidence, 60)),
-                concerns=["Reviewer math rejection overridden by deterministic edge formula"],
-                recommendation=f"Proceeding: deterministic edge is {calculated_edge:.1f}¢.",
-            )
-
-        if no_research_reject and strong_liquid_market and near_term:
-            return ReviewResult(
-                approved=True,
-                confidence=35,
-                concerns=["Limited research, but liquid near-term market and deterministic edge pass"],
-                recommendation=f"Proceeding cautiously with {calculated_edge:.1f}¢ edge.",
-            )
-
-        return None
-
-    def _has_hard_rejection_reason(self, concerns_text: str) -> bool:
-        hard_reasons = (
-            "already happened",
-            "impossible",
-            "position size",
-            "blow up",
-            "directly contradicts",
-            "research directly contradicts",
-            "head-to-head",
-            "historical performance suggests",
-            "forecast says",
-            "settlement rules contradict",
-            "invalid",
-        )
-        return any(reason in concerns_text for reason in hard_reasons)
-
-    def _safe_number(self, value, default: float = 0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default

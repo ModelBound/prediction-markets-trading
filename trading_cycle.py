@@ -173,6 +173,18 @@ class TradingCycle:
                 self._save_cycle_log(cycle_log, cycle_start)
                 return cycle_log
 
+            if len(markets) <= config.MIN_MARKETS_TO_TRADE:
+                logger.info(
+                    f"Only {len(markets)} markets in feed (min {config.MIN_MARKETS_TO_TRADE}); passing."
+                )
+                cycle_log["action"] = "pass"
+                cycle_log["pass_reason"] = (
+                    f"Only {len(markets)} markets available; passing to avoid forced low-quality trades"
+                )
+                self._save_cycle_log(cycle_log, cycle_start)
+                self.cycle_number += 1
+                return cycle_log
+
             # Step 3: Update position prices from market data
             self._update_position_prices(markets)
 
@@ -186,14 +198,17 @@ class TradingCycle:
                 self.cycle_number % config.RESEARCH_INTERVAL_CYCLES == 1
                 or not cached_research
             )
+            research_fresh = False
             if should_research:
                 logger.info("Researching top market opportunities (LLM)...")
                 research = self.agent.research_markets_batch(markets)
                 cycle_log["research_count"] = len(research)
+                research_fresh = True
                 self._save_research_cache(research)
             else:
                 research = cached_research
                 logger.info(f"Using cached research ({len(research)} markets)")
+            cycle_log["research_fresh"] = research_fresh
 
             # Merge free research into LLM research (free takes priority as it's current)
             for ticker, data in free_data.items():
@@ -219,7 +234,9 @@ class TradingCycle:
 
             # Step 5: Execute trades if any
             if decision.get("action") == "trade" and decision.get("trades"):
-                trade_results = self._execute_trades(decision["trades"], markets, research, effective_balance)
+                trade_results = self._execute_trades(
+                    decision["trades"], markets, research, effective_balance
+                )
                 cycle_log["trades"] = trade_results
                 cycle_log["trades_attempted"] = len(decision["trades"])
                 cycle_log["trades_executed"] = sum(1 for t in trade_results if t.get("success"))
@@ -509,8 +526,8 @@ class TradingCycle:
             if _is_weather_series(series):
                 continue
 
-            # EXCLUDE blocked series (15-min crypto, etc.)
-            if series in config.BLOCKED_TRADE_SERIES:
+            # EXCLUDE blocked series (15-min crypto, commodity brackets, etc.)
+            if config.is_blocked_series(series):
                 continue
 
             # EXCLUDE markets we already hold positions in
@@ -909,7 +926,22 @@ class TradingCycle:
             return ask
         return proposed_price
 
-    def _execute_trades(self, trades: list, markets: list = None, research: dict = None, effective_balance: int = 0) -> list:
+    def _has_adequate_research(self, ticker: str, research: dict) -> bool:
+        """True when research text exists and looks substantive for this ticker."""
+        text = (research or {}).get(ticker, "")
+        if not text or len(text.strip()) < 80:
+            return False
+        lower = text.lower()
+        bad_phrases = ("no research", "research unavailable", "no findings", "unavailable:")
+        return not any(phrase in lower for phrase in bad_phrases)
+
+    def _execute_trades(
+        self,
+        trades: list,
+        markets: list = None,
+        research: dict = None,
+        effective_balance: int = 0,
+    ) -> list:
         """Execute validated trades."""
         results = []
         research = research or {}
@@ -945,10 +977,17 @@ class TradingCycle:
             logger.info(f"Attempting trade: {side.upper()} {count}x {ticker} @ {price}¢")
 
             series = ticker.split("-")[0] if ticker else ""
-            if series in config.BLOCKED_TRADE_SERIES:
+            if config.is_blocked_series(series):
                 logger.info(f"Pre-flight reject: {ticker} series {series} is blocked")
                 self._log_blocked(trade, f"Blocked series: {series}", markets)
                 results.append({"ticker": ticker, "success": False, "reason": f"Blocked series: {series}"})
+                continue
+
+            if config.REQUIRE_RESEARCH_FOR_TRADE and not self._has_adequate_research(ticker, research):
+                logger.info(f"Pre-flight reject: {ticker} missing adequate research")
+                self._mark_rejected(ticker)
+                self._log_blocked(trade, "No adequate research for this market", markets)
+                results.append({"ticker": ticker, "success": False, "reason": "No adequate research for this market"})
                 continue
 
             # (Rejection cache removed - every proposal goes fresh to reviewer)
@@ -1023,7 +1062,27 @@ class TradingCycle:
                 results.append({"ticker": ticker, "success": False, "reason": f"Invalid probability: {ai_prob}"})
                 continue
 
-            if price < config.MIN_TRADE_PRICE_CENTS and not trade.get("allow_longshot", False):
+            if side == "yes":
+                max_yes_prob = config.max_plausible_yes_probability(price)
+                if ai_prob > max_yes_prob:
+                    logger.info(
+                        f"Pre-flight reject: {ticker} AI prob {ai_prob}% exceeds "
+                        f"plausible max {max_yes_prob}% for {price}¢ YES"
+                    )
+                    self._mark_rejected(ticker)
+                    self._log_blocked(
+                        trade,
+                        f"AI probability {ai_prob}% too high for {price}¢ YES (max {max_yes_prob}%)",
+                        markets,
+                    )
+                    results.append({
+                        "ticker": ticker,
+                        "success": False,
+                        "reason": f"AI probability {ai_prob}% implausible for {price}¢ YES",
+                    })
+                    continue
+
+            if price < config.MIN_TRADE_PRICE_CENTS:
                 logger.info(f"Pre-flight reject: {ticker} price={price}¢ below minimum {config.MIN_TRADE_PRICE_CENTS}¢")
                 self._mark_rejected(ticker)
                 self._log_blocked(trade, f"Price too low: {price}¢", markets)

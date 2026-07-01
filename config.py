@@ -64,7 +64,9 @@ SPECULATIVE_EDGE_MIN_CENTS = 5  # Lower edge threshold for speculative bets
 MIN_TRADE_SPEND_PCT = 0.06  # Target at least 6% of available cash for normal trades
 MAX_TRADE_SPEND_PCT = 0.12  # Target at most 12% of available cash for normal trades
 HIGH_EDGE_TRADE_SPEND_PCT = 0.16  # Allow larger sizing for very strong edges
-MIN_TRADE_PRICE_CENTS = 5  # Avoid 1-4¢ longshots unless explicitly whitelisted in code
+MIN_TRADE_PRICE_CENTS = 25  # Avoid low-price longshots (2% historical win rate at 1-15¢)
+MIN_MARKETS_TO_TRADE = 3  # Pass rather than force trades when the feed is too thin
+REQUIRE_RESEARCH_FOR_TRADE = True  # Each executed trade needs research text for its ticker
 AUTO_EXECUTE_REVIEWER_REDIRECTS = False  # Redirects are suggestions only; never auto-trade them
 TARGET_DAILY_EXECUTED_TRADES = 4  # Quality over volume; was 8 and encouraged forced trades.
 
@@ -101,17 +103,48 @@ MAX_RESEARCH_MARKETS = 1
 MIN_RESEARCH_VOLUME = 250
 REJECTION_COOLDOWN_CYCLES = 12  # Suppress repeatedly bad/rejected tickers for ~4 hours
 
-# Series the agent must never trade (15-min crypto markets behave like random walks)
+# Series the agent must never trade
 BLOCKED_TRADE_SERIES = {
     "KXSOL15M",
     "KXDOGE15M",
     "KXBTC15M",
     "KXETH15M",
+    "KXBNB15M",
 }
 
-# Minimum AI probability for low-price YES bets (avoids 6-17¢ longshots with 20-30% claimed edge)
-MIN_AI_PROB_FOR_LOW_PRICE_YES = 40  # when price <= LOW_PRICE_YES_THRESHOLD_CENTS
-LOW_PRICE_YES_THRESHOLD_CENTS = 20
+# Prefix blocks: commodity brackets the LLM cannot predict reliably (3/48 win rate)
+BLOCKED_TRADE_SERIES_PREFIXES = (
+    "KXAAAGAS",
+    "KXBRENT",
+    "KXWTI",
+    "KXCOPPER",
+    "KXJETFUEL",
+    "KXGAS",
+    "KXOIL",
+    "KXXRP",
+    "KXHYPE",
+)
+
+
+def is_blocked_series(series: str) -> bool:
+    """Return True if this Kalshi series must not be traded."""
+    if series in BLOCKED_TRADE_SERIES:
+        return True
+    if series.endswith("15M"):
+        return True
+    return any(series.startswith(prefix) for prefix in BLOCKED_TRADE_SERIES_PREFIXES)
+
+
+def max_plausible_yes_probability(price_cents: int) -> int:
+    """Upper bound for AI YES probability given contract price."""
+    if price_cents >= LOW_PRICE_YES_THRESHOLD_CENTS:
+        return 95
+    return min(95, price_cents + MAX_AI_PROB_ABOVE_PRICE_CENTS)
+
+# Cap AI self-reported probability on cheap YES contracts (prevents "80% at 6¢" fantasy edges)
+LOW_PRICE_YES_THRESHOLD_CENTS = 35
+MAX_AI_PROB_ABOVE_PRICE_CENTS = 15  # YES: ai_prob cannot exceed price + this when price < threshold
+MIN_AI_PROB_FOR_LOW_PRICE_YES = 40  # kept for sub-threshold YES if allow_longshot ever used
 
 # OpenAI cost controls. These are conservative estimates used for a daily guardrail.
 # Target around $1/day in normal operation, with an absolute safety ceiling in code.

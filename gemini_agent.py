@@ -526,16 +526,16 @@ You can place MULTIPLE trades in one cycle across different market groups. Sprea
 The total of all trades must not exceed your Trading Budget.
 
 CRITICAL RULES:
-- If no research findings are provided above, you may still trade on markets where the price implies a probability that is clearly mispriced based on common knowledge or market context.
+- Do NOT trade without research findings for that specific ticker in this cycle's Research section.
+- NEVER bet on commodity/gas/oil/crypto bracket markets (KXAAAGAS*, KXBRENT*, KXWTI*, KXCOPPER*, *15M).
 - NEVER bet on multiple brackets for the same event. Pick ONE bracket that matches the forecast and commit.
 - NEVER repeat a trade you already made. Check Active Positions above.
-- MANDATORY DIVERSIFICATION: Do not default to NBA/NHL just because they are familiar. Explicitly compare esports, tennis, politics/culture, macro/finance, motorsport, and team sports before choosing.
+- MANDATORY DIVERSIFICATION: Do not default to NBA/NHL just because they are familiar.
 - If several markets have similar edge, prefer the category where the portfolio has fewer open positions.
-- Do NOT propose trades with an executable ASK price below {config.MIN_TRADE_PRICE_CENTS}¢ unless you explicitly set "allow_longshot": true and have very specific evidence the market is wrong.
-- Do NOT trade 15-minute crypto price markets (KXSOL15M, KXDOGE15M, etc.) — they are random walks with no predictable edge.
-- If only 1-2 markets are available and edge is marginal, PASS rather than forcing a trade.
-- For YES bets below {config.LOW_PRICE_YES_THRESHOLD_CENTS}¢, you need AI probability ≥ {config.MIN_AI_PROB_FOR_LOW_PRICE_YES}% with supporting research.
-- For sports/esports: the market price IS useful information. If a team is at 45¢, the crowd thinks they have a 45% chance. If you think it's higher based on matchup/context, that's edge.
+- Do NOT propose trades with an executable ASK price below {config.MIN_TRADE_PRICE_CENTS}¢.
+- If only {config.MIN_MARKETS_TO_TRADE} or fewer markets are available, PASS — do not force a trade.
+- Your YES probability for a contract must be plausible: never claim >40% on contracts priced below 25¢.
+- For sports/esports: the market price IS useful information. Only disagree with strong matchup-specific evidence.
 
 PRICING: Use the ASK price (not bid) to ensure immediate fill.
 
